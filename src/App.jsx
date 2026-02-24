@@ -1,50 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
 import html2canvas from 'html2canvas';
+import { db } from './firebase';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 
-// IndexedDB helper functions
-const DB_NAME = 'LoveNotesDB';
-const STORE_NAME = 'cards';
-
-const openDB = () => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-      }
-    };
-  });
-};
-
-const saveCardToDB = async (id, cardData) => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.put({ id, data: cardData });
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-};
-
-const getCardFromDB = async (id) => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(id);
-
-    request.onsuccess = () => resolve(request.result?.data);
-    request.onerror = () => reject(request.error);
-  });
-};
 
 const ValentineCardMaker = () => {
   const [youtubeUrl, setYoutubeUrl] = useState('');
@@ -115,21 +74,11 @@ const ValentineCardMaker = () => {
 
       if (id) {
         try {
-          // Try IndexedDB first
-          let cardData = await getCardFromDB(id);
+          const docRef = doc(db, 'cards', id);
+          const docSnap = await getDoc(docRef);
 
-          // Fallback to localStorage for old cards
-          if (!cardData) {
-            const savedCard = localStorage.getItem(`lovenotes-card-${id}`);
-            if (savedCard) {
-              cardData = JSON.parse(savedCard);
-              // Migrate to IndexedDB
-              await saveCardToDB(id, cardData);
-              console.log('Migrated card from localStorage to IndexedDB');
-            }
-          }
-
-          if (cardData) {
+          if (docSnap.exists()) {
+            const cardData = docSnap.data();
             setCardElements(cardData.elements);
             setBackground(cardData.background);
             setYoutubeUrl(cardData.youtubeUrl || '');
@@ -145,10 +94,12 @@ const ValentineCardMaker = () => {
                 setIsMusicPlaying(true);
               }, 1500);
             }
+          } else {
+            alert('Card not found. The link may be invalid or expired.');
           }
         } catch (error) {
           console.error('Error loading card:', error);
-          alert('Failed to load card. The link may be invalid.');
+          alert('Failed to load card. Please check your connection and try again.');
         }
       }
     };
@@ -312,20 +263,21 @@ const ValentineCardMaker = () => {
         elements: cardElements,
         background: background,
         youtubeUrl: youtubeUrl,
+        createdAt: new Date().toISOString(),
       };
 
-      // Save to IndexedDB instead of localStorage
-      await saveCardToDB(id, cardData);
+      // Save to Firestore
+      await setDoc(doc(db, 'cards', id), cardData);
       setCardId(id);
 
       const shareUrl = `${window.location.origin}${window.location.pathname}?card=${id}`;
       setShareUrl(shareUrl);
       setShowShareModal(true);
 
-      console.log('Card saved successfully to IndexedDB');
+      console.log('Card saved successfully to Firestore');
     } catch (error) {
       console.error('Save error:', error);
-      alert('Failed to save card. Please try again.');
+      alert('Failed to save card. Please check your connection and try again.');
     }
   };
 
